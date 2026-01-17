@@ -28,18 +28,87 @@ interface ActivityResponse {
   status?: string; // 'pending' | 'confirmed'
 }
 
+/**
+ * LRU Cache for processed transaction hashes
+ * Limits memory usage by keeping only recent hashes
+ */
+class ProcessedHashesCache {
+  private readonly maxSize: number;
+  private readonly hashes: Set<string> = new Set();
+  private readonly accessOrder: string[] = [];
+
+  constructor(maxSize: number = 10000) {
+    this.maxSize = maxSize;
+  }
+
+  has(hash: string): boolean {
+    return this.hashes.has(hash);
+  }
+
+  add(hash: string): void {
+    if (this.hashes.has(hash)) {
+      // Move to end (most recently used)
+      const index = this.accessOrder.indexOf(hash);
+      if (index > -1) {
+        this.accessOrder.splice(index, 1);
+        this.accessOrder.push(hash);
+      }
+      return;
+    }
+
+    // Remove oldest if at capacity
+    if (this.hashes.size >= this.maxSize) {
+      const oldest = this.accessOrder.shift();
+      if (oldest) {
+        this.hashes.delete(oldest);
+      }
+    }
+
+    this.hashes.add(hash);
+    this.accessOrder.push(hash);
+  }
+
+  clear(): void {
+    this.hashes.clear();
+    this.accessOrder.length = 0;
+  }
+
+  size(): number {
+    return this.hashes.size;
+  }
+}
+
 export class MempoolMonitorService {
   private readonly deps: MempoolMonitorDeps;
   private provider?: ethers.providers.JsonRpcProvider;
   private isRunning = false;
-  private readonly processedHashes: Set<string> = new Set();
+  private readonly processedHashes: ProcessedHashesCache;
   private readonly targetAddresses: Set<string> = new Set();
   private timer?: NodeJS.Timeout;
   private readonly lastFetchTime: Map<string, number> = new Map();
+  private shutdownHandlers: (() => void)[] = [];
 
   constructor(deps: MempoolMonitorDeps) {
     this.deps = deps;
+    this.processedHashes = new ProcessedHashesCache(10000); // Limit to 10k hashes
     POLYMARKET_CONTRACTS.forEach((addr) => this.targetAddresses.add(addr.toLowerCase()));
+    
+    // Register graceful shutdown handlers
+    this.registerShutdownHandlers();
+  }
+
+  private registerShutdownHandlers(): void {
+    const shutdown = () => {
+      this.stop();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+    process.on('uncaughtException', (err) => {
+      this.deps.logger.error('Uncaught exception', err);
+      shutdown();
+    });
   }
 
   async start(): Promise<void> {
@@ -105,17 +174,19 @@ export class MempoolMonitorService {
   private async monitorRecentOrders(): Promise<void> {
     const { logger, env } = this.deps;
     
-    // Monitor all addresses from env (these are the addresses we want to frontrun)
-    for (const targetAddress of env.targetAddresses) {
+    // Monitor all addresses in parallel for better performance
+    const promises = env.targetAddresses.map(async (targetAddress) => {
       try {
         await this.checkRecentActivity(targetAddress);
       } catch (err) {
         if (axios.isAxiosError(err) && err.response?.status === 404) {
-          continue;
+          return; // User not found, skip silently
         }
         logger.debug(`Error checking activity for ${targetAddress}: ${err instanceof Error ? err.message : String(err)}`);
       }
-    }
+    });
+
+    await Promise.allSettled(promises);
   }
 
   private async checkRecentActivity(targetAddress: string): Promise<void> {

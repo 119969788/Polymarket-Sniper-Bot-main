@@ -21,18 +21,79 @@ interface Position {
   currentValue: number;
 }
 
+/**
+ * Balance cache to reduce redundant RPC calls
+ */
+class BalanceCache {
+  private usdcBalance: number | null = null;
+  private polBalance: number | null = null;
+  private lastUpdate: number = 0;
+  private readonly ttl: number; // Time to live in milliseconds
+
+  constructor(ttl: number = 5000) {
+    this.ttl = ttl;
+  }
+
+  async getUsdcBalance(
+    wallet: Wallet,
+    usdcContractAddress: string,
+    getter: (wallet: Wallet, address: string) => Promise<number>,
+  ): Promise<number> {
+    const now = Date.now();
+    if (this.usdcBalance === null || now - this.lastUpdate > this.ttl) {
+      this.usdcBalance = await getter(wallet, usdcContractAddress);
+      this.lastUpdate = now;
+    }
+    return this.usdcBalance;
+  }
+
+  async getPolBalance(
+    wallet: Wallet,
+    getter: (wallet: Wallet) => Promise<number>,
+  ): Promise<number> {
+    const now = Date.now();
+    if (this.polBalance === null || now - this.lastUpdate > this.ttl) {
+      this.polBalance = await getter(wallet);
+      this.lastUpdate = now;
+    }
+    return this.polBalance;
+  }
+
+  invalidate(): void {
+    this.usdcBalance = null;
+    this.polBalance = null;
+    this.lastUpdate = 0;
+  }
+}
+
 export class TradeExecutorService {
   private readonly deps: TradeExecutorDeps;
+  private readonly balanceCache: BalanceCache;
+  private readonly activeTrades: Set<string> = new Set(); // Track active trades to prevent duplicates
 
   constructor(deps: TradeExecutorDeps) {
     this.deps = deps;
+    this.balanceCache = new BalanceCache(5000); // Cache balances for 5 seconds
   }
 
   async frontrunTrade(signal: TradeSignal): Promise<void> {
     const { logger, env, client } = this.deps;
+    
+    // Create unique trade identifier to prevent duplicate executions
+    const tradeId = `${signal.tokenId}-${signal.side}-${signal.timestamp}`;
+    if (this.activeTrades.has(tradeId)) {
+      logger.debug(`[Frontrun] Trade ${tradeId} already in progress, skipping`);
+      return;
+    }
+
+    this.activeTrades.add(tradeId);
+
     try {
-      const yourUsdBalance = await getUsdBalanceApprox(client.wallet, env.usdcContractAddress);
-      const polBalance = await getPolBalance(client.wallet);
+      // Use cached balances to reduce RPC calls
+      const [yourUsdBalance, polBalance] = await Promise.all([
+        this.balanceCache.getUsdcBalance(client.wallet, env.usdcContractAddress, getUsdBalanceApprox),
+        this.balanceCache.getPolBalance(client.wallet, getPolBalance),
+      ]);
 
       logger.info(`[Frontrun] Balance check - POL: ${polBalance.toFixed(4)} POL, USDC: ${yourUsdBalance.toFixed(2)} USDC`);
 
@@ -77,6 +138,9 @@ export class TradeExecutorService {
         targetGasPrice: signal.targetGasPrice,
       });
       
+      // Invalidate cache after successful trade
+      this.balanceCache.invalidate();
+      
       logger.info(`[Frontrun] Successfully executed ${signal.side} order for ${frontrunSize.toFixed(2)} USD`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -85,6 +149,11 @@ export class TradeExecutorService {
       } else {
         logger.error(`[Frontrun] Failed to frontrun trade: ${errorMessage}`, err as Error);
       }
+    } finally {
+      // Remove from active trades after a delay to allow for retries
+      setTimeout(() => {
+        this.activeTrades.delete(tradeId);
+      }, 30000); // Remove after 30 seconds
     }
   }
 

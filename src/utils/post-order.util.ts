@@ -59,10 +59,25 @@ export async function postOrder(input: PostOrderInput): Promise<void> {
   let remaining = sizeUsd;
   let retryCount = 0;
   const maxRetries = ORDER_EXECUTION.MAX_RETRIES;
+  let lastOrderBook = orderBook; // Reuse initial orderbook
 
   while (remaining > ORDER_EXECUTION.MIN_REMAINING_USD && retryCount < maxRetries) {
-    const currentOrderBook = await client.getOrderBook(tokenId);
-    const currentLevels = isBuy ? currentOrderBook.asks : currentOrderBook.bids;
+    // Only fetch new orderbook if previous order failed or we need fresh data
+    if (retryCount > 0 || lastOrderBook === null) {
+      try {
+        lastOrderBook = await client.getOrderBook(tokenId);
+      } catch (error) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          throw error;
+        }
+        // Exponential backoff for retries
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000)));
+        continue;
+      }
+    }
+
+    const currentLevels = isBuy ? lastOrderBook.asks : lastOrderBook.bids;
 
     if (!currentLevels || currentLevels.length === 0) {
       break;
@@ -72,17 +87,21 @@ export async function postOrder(input: PostOrderInput): Promise<void> {
     const levelPrice = parseFloat(level.price);
     const levelSize = parseFloat(level.size);
 
-    let orderSize: number;
-    let orderValue: number;
+    // Validate price and size
+    if (isNaN(levelPrice) || isNaN(levelSize) || levelPrice <= 0 || levelSize <= 0) {
+      retryCount++;
+      lastOrderBook = null; // Force refresh on next iteration
+      continue;
+    }
 
-    if (isBuy) {
-      const levelValue = levelSize * levelPrice;
-      orderValue = Math.min(remaining, levelValue);
-      orderSize = orderValue / levelPrice;
-    } else {
-      const levelValue = levelSize * levelPrice;
-      orderValue = Math.min(remaining, levelValue);
-      orderSize = orderValue / levelPrice;
+    // Calculate order size (same logic for both buy and sell)
+    const levelValue = levelSize * levelPrice;
+    const orderValue = Math.min(remaining, levelValue);
+    const orderSize = orderValue / levelPrice;
+
+    // Validate order size
+    if (orderSize <= 0 || orderValue <= 0) {
+      break;
     }
 
     const orderArgs = {
@@ -99,14 +118,27 @@ export async function postOrder(input: PostOrderInput): Promise<void> {
       if (response.success) {
         remaining -= orderValue;
         retryCount = 0;
+        lastOrderBook = null; // Invalidate cache after successful order
       } else {
         retryCount++;
+        lastOrderBook = null; // Force refresh on failure
       }
     } catch (error) {
       retryCount++;
-      if (retryCount >= maxRetries) {
+      lastOrderBook = null; // Force refresh on error
+      
+      // Check if error is retryable
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isRetryable = !errorMessage.includes('closed') && 
+                         !errorMessage.includes('resolved') &&
+                         !errorMessage.includes('insufficient');
+      
+      if (!isRetryable || retryCount >= maxRetries) {
         throw error;
       }
+      
+      // Exponential backoff
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * Math.pow(2, retryCount), 5000)));
     }
   }
 }

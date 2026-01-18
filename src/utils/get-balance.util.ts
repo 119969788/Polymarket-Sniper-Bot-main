@@ -1,4 +1,4 @@
-import { Contract, providers, utils } from 'ethers';
+import { ethers } from 'ethers';
 import type { Wallet } from 'ethers';
 
 const USDC_ABI = ['function balanceOf(address owner) view returns (uint256)'];
@@ -11,9 +11,9 @@ export async function getUsdBalanceApprox(
   if (!provider) {
     throw new Error('Wallet provider is required');
   }
-  const usdcContract = new Contract(usdcContractAddress, USDC_ABI, provider);
+  const usdcContract = new ethers.Contract(usdcContractAddress, USDC_ABI, provider);
   const balance = await usdcContract.balanceOf(wallet.address);
-  return parseFloat(utils.formatUnits(balance, 6));
+  return parseFloat(ethers.utils.formatUnits(balance, 6));
 }
 
 export async function getPolBalance(wallet: Wallet): Promise<number> {
@@ -22,6 +22,6 @@ export async function getPolBalance(wallet: Wallet): Promise<number> {
     throw new Error('Wallet provider is required');
   }
   const balance = await provider.getBalance(wallet.address);
-  return parseFloat(utils.formatEther(balance));
+  return parseFloat(ethers.utils.formatEther(balance));
 }
 

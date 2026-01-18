@@ -26,6 +26,11 @@ async function main(): Promise<void> {
 
     logger.info('Starting Polymarket Frontrun Bot');
     logger.info(`Monitoring ${env.targetAddresses.length} target address(es)`);
+    
+    if (!env.tradeExecutionEnabled) {
+      logger.warn('⚠️  TRADE EXECUTION IS DISABLED - Monitoring only mode');
+      logger.warn('⚠️  Bot will detect trades but will NOT execute any orders');
+    }
 
     const client = await createPolymarketClient({
       rpcUrl: env.rpcUrl,
@@ -60,10 +65,17 @@ async function main(): Promise<void> {
       logger,
       env,
       onDetectedTrade: async (signal) => {
-        // Execute frontrun asynchronously to not block monitoring
-        void executor.frontrunTrade(signal).catch((err) => {
-          logger.error(`[Frontrun] Unhandled error in trade execution: ${err instanceof Error ? err.message : String(err)}`);
-        });
+        if (env.tradeExecutionEnabled) {
+          // Execute frontrun asynchronously to not block monitoring
+          void executor.frontrunTrade(signal).catch((err) => {
+            logger.error(`[Frontrun] Unhandled error in trade execution: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        } else {
+          // Monitoring only mode - just log the detected trade
+          logger.info(
+            `[Monitor Only] Trade detected but NOT executed: ${signal.side} ${signal.sizeUsd.toFixed(2)} USD on market ${signal.marketId}`
+          );
+        }
       },
     });
 

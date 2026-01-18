@@ -18,6 +18,7 @@ export type RuntimeEnv = {
   minTradeSizeUsd?: number; // Minimum trade size to frontrun (USD)
   frontrunSizeMultiplier?: number; // Frontrun size as percentage of target trade (0.0-1.0)
   gasPriceMultiplier?: number; // Gas price multiplier for frontrunning (e.g., 1.2 = 20% higher)
+  tradeExecutionEnabled?: boolean; // Enable/disable trade execution (monitoring only mode)
 };
 
 /**
@@ -124,6 +125,8 @@ export function loadEnv(): RuntimeEnv {
   const gasPriceMultiplier = Number(process.env.GAS_PRICE_MULTIPLIER ?? DEFAULT_CONFIG.GAS_PRICE_MULTIPLIER);
   validateNumber(gasPriceMultiplier, 1, 5, 'GAS_PRICE_MULTIPLIER');
 
+  const tradeExecutionEnabled = String(process.env.TRADE_EXECUTION_ENABLED ?? 'true') === 'true';
+
   const usdcContractAddress = process.env.USDC_CONTRACT_ADDRESS || POLYGON_USDC_ADDRESS;
   if (!isValidAddress(usdcContractAddress)) {
     throw new Error(`Invalid USDC_CONTRACT_ADDRESS format: ${usdcContractAddress}`);
@@ -147,6 +150,7 @@ export function loadEnv(): RuntimeEnv {
     minTradeSizeUsd,
     frontrunSizeMultiplier,
     gasPriceMultiplier,
+    tradeExecutionEnabled,
   };
 
   return env;

@@ -86,6 +86,7 @@ async function main(): Promise<void> {
     await monitor.start();
     
     logger.info('Bot is running. Press Ctrl+C to stop gracefully.');
+    logger.info('📊 Logs are outputting in real-time. Monitor the console for trade signals.');
   } catch (err) {
     logger.error('Failed to start bot', err as Error);
     throw err;

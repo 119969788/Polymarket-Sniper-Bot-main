@@ -12,15 +12,27 @@ export class ConsoleLogger implements Logger {
     return new Date().toISOString();
   }
 
+  private flush(): void {
+    // Force flush stdout and stderr to ensure real-time output
+    if (process.stdout.isTTY) {
+      process.stdout.write('');
+    }
+    if (process.stderr.isTTY) {
+      process.stderr.write('');
+    }
+  }
+
   info(msg: string): void {
     const timestamp = this.getTimestamp();
     // eslint-disable-next-line no-console
     console.log(chalk.cyan(`[INFO] [${timestamp}]`), msg);
+    this.flush();
   }
   warn(msg: string): void {
     const timestamp = this.getTimestamp();
     // eslint-disable-next-line no-console
     console.warn(chalk.yellow(`[WARN] [${timestamp}]`), msg);
+    this.flush();
   }
   error(msg: string, err?: Error): void {
     const timestamp = this.getTimestamp();
@@ -29,6 +41,7 @@ export class ConsoleLogger implements Logger {
       : '';
     // eslint-disable-next-line no-console
     console.error(chalk.red(`[ERROR] [${timestamp}]`), msg, errorDetails);
+    this.flush();
   }
   debug(msg: string): void {
     const isDebugEnabled = process.env.DEBUG === '1' || process.env.VERBOSE === '1';
@@ -36,6 +49,7 @@ export class ConsoleLogger implements Logger {
       const timestamp = this.getTimestamp();
       // eslint-disable-next-line no-console
       console.debug(chalk.gray(`[DEBUG] [${timestamp}]`), msg);
+      this.flush();
     }
   }
 }

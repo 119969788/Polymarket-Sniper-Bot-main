@@ -59,7 +59,7 @@ export async function postOrder(input: PostOrderInput): Promise<void> {
   let remaining = sizeUsd;
   let retryCount = 0;
   const maxRetries = ORDER_EXECUTION.MAX_RETRIES;
-  let lastOrderBook = orderBook; // Reuse initial orderbook
+  let lastOrderBook: typeof orderBook | null = orderBook; // Reuse initial orderbook
 
   while (remaining > ORDER_EXECUTION.MIN_REMAINING_USD && retryCount < maxRetries) {
     // Only fetch new orderbook if previous order failed or we need fresh data

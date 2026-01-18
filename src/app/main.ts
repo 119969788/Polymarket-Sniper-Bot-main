@@ -25,11 +25,15 @@ async function main(): Promise<void> {
     }
 
     logger.info('Starting Polymarket Frontrun Bot');
-    logger.info(`Monitoring ${env.targetAddresses.length} target address(es)`);
+    logger.info(`Monitoring ${env.targetAddresses.length} target address(es): ${env.targetAddresses.join(', ')}`);
+    logger.info(`Configuration - Fetch Interval: ${env.fetchIntervalSeconds}s, Min Trade Size: ${env.minTradeSizeUsd || DEFAULT_CONFIG.MIN_TRADE_SIZE_USD} USD`);
+    logger.info(`Configuration - Frontrun Multiplier: ${env.frontrunSizeMultiplier || DEFAULT_CONFIG.FRONTRUN_SIZE_MULTIPLIER}, Gas Multiplier: ${env.gasPriceMultiplier || DEFAULT_CONFIG.GAS_PRICE_MULTIPLIER}`);
     
     if (!env.tradeExecutionEnabled) {
       logger.warn('⚠️  TRADE EXECUTION IS DISABLED - Monitoring only mode');
       logger.warn('⚠️  Bot will detect trades but will NOT execute any orders');
+    } else {
+      logger.info('✅ Trade execution is ENABLED - Bot will execute trades automatically');
     }
 
     const client = await createPolymarketClient({

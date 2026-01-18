@@ -100,10 +100,12 @@ export class TradeExecutorService {
       // For frontrunning, we execute the same trade but with higher priority
       // Calculate frontrun size (typically smaller or same as target)
       const frontrunSize = this.calculateFrontrunSize(signal.sizeUsd, env);
+      const multiplier = env.frontrunSizeMultiplier || DEFAULT_CONFIG.FRONTRUN_SIZE_MULTIPLIER;
 
       logger.info(
-        `[Frontrun] Executing ${signal.side} ${frontrunSize.toFixed(2)} USD (target: ${signal.sizeUsd.toFixed(2)} USD)`,
+        `[Frontrun] Executing ${signal.side} ${frontrunSize.toFixed(2)} USD (target: ${signal.sizeUsd.toFixed(2)} USD, multiplier: ${multiplier})`,
       );
+      logger.info(`[Frontrun] Trade details - Market: ${signal.marketId}, Token: ${signal.tokenId}, Outcome: ${signal.outcome}, Price: ${signal.price}, Trader: ${signal.trader}`);
 
       // Balance validation
       const requiredUsdc = frontrunSize;
@@ -127,6 +129,9 @@ export class TradeExecutorService {
 
       // Execute frontrun order with priority
       // The postOrder function will use higher gas prices if configured
+      logger.info(`[Frontrun] Submitting order to exchange...`);
+      const startTime = Date.now();
+      
       await postOrder({
         client,
         marketId: signal.marketId,
@@ -138,10 +143,12 @@ export class TradeExecutorService {
         targetGasPrice: signal.targetGasPrice,
       });
       
+      const executionTime = Date.now() - startTime;
+      
       // Invalidate cache after successful trade
       this.balanceCache.invalidate();
       
-      logger.info(`[Frontrun] Successfully executed ${signal.side} order for ${frontrunSize.toFixed(2)} USD`);
+      logger.info(`[Frontrun] ✅ Successfully executed ${signal.side} order for ${frontrunSize.toFixed(2)} USD (execution time: ${executionTime}ms)`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (errorMessage.includes('closed') || errorMessage.includes('resolved') || errorMessage.includes('No orderbook')) {

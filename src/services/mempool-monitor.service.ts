@@ -194,31 +194,58 @@ export class MempoolMonitorService {
     
     try {
       const url = POLYMARKET_API.ACTIVITY_ENDPOINT(targetAddress);
+      logger.debug(`[Monitor] Fetching activities for ${targetAddress} from ${url}`);
       const activities: ActivityResponse[] = await httpGet<ActivityResponse[]>(url);
 
       const now = Math.floor(Date.now() / 1000);
       const cutoffTime = now - DEFAULT_CONFIG.ACTIVITY_CHECK_WINDOW_SECONDS;
+      
+      logger.debug(`[Monitor] Fetched ${activities.length} total activities for ${targetAddress}`);
+
+      let processedCount = 0;
+      let skippedCount = 0;
 
       for (const activity of activities) {
-        if (activity.type !== 'TRADE') continue;
+        if (activity.type !== 'TRADE') {
+          skippedCount++;
+          continue;
+        }
 
         const activityTime = typeof activity.timestamp === 'number' 
           ? activity.timestamp 
           : Math.floor(new Date(activity.timestamp).getTime() / 1000);
         
+        logger.debug(`[Monitor] Processing trade: ${activity.transactionHash}, size: ${activity.usdcSize || activity.size * activity.price} USD, time: ${activityTime}`);
+        
         // Only process very recent trades (potential frontrun targets)
-        if (activityTime < cutoffTime) continue;
+        if (activityTime < cutoffTime) {
+          skippedCount++;
+          logger.debug(`[Monitor] Skipping old trade: ${activity.transactionHash} (time: ${activityTime}, cutoff: ${cutoffTime})`);
+          continue;
+        }
         
         // Skip if already processed
-        if (this.processedHashes.has(activity.transactionHash)) continue;
+        if (this.processedHashes.has(activity.transactionHash)) {
+          skippedCount++;
+          logger.debug(`[Monitor] Skipping already processed trade: ${activity.transactionHash}`);
+          continue;
+        }
 
         const lastTime = this.lastFetchTime.get(targetAddress) || 0;
-        if (activityTime <= lastTime) continue;
+        if (activityTime <= lastTime) {
+          skippedCount++;
+          logger.debug(`[Monitor] Skipping trade before last fetch time: ${activity.transactionHash} (activity: ${activityTime}, last: ${lastTime})`);
+          continue;
+        }
 
         // Check minimum trade size
         const sizeUsd = activity.usdcSize || activity.size * activity.price;
         const minTradeSize = env.minTradeSizeUsd || DEFAULT_CONFIG.MIN_TRADE_SIZE_USD;
-        if (sizeUsd < minTradeSize) continue;
+        if (sizeUsd < minTradeSize) {
+          skippedCount++;
+          logger.debug(`[Monitor] Skipping small trade: ${activity.transactionHash} (size: ${sizeUsd.toFixed(2)} USD < min: ${minTradeSize} USD)`);
+          continue;
+        }
 
         // Check if transaction is still pending (frontrun opportunity)
         const txStatus = await this.checkTransactionStatus(activity.transactionHash);
@@ -231,6 +258,7 @@ export class MempoolMonitorService {
         logger.info(
           `[Frontrun] Detected pending trade: ${activity.side.toUpperCase()} ${sizeUsd.toFixed(2)} USD on market ${activity.conditionId}`,
         );
+        logger.info(`[Frontrun] Trade details - Trader: ${targetAddress}, Token: ${activity.asset}, Outcome: ${activity.outcomeIndex === 0 ? 'YES' : 'NO'}, Price: ${activity.price}, TX: ${activity.transactionHash}`);
 
         const signal: TradeSignal = {
           trader: targetAddress,
@@ -246,10 +274,13 @@ export class MempoolMonitorService {
 
         this.processedHashes.add(activity.transactionHash);
         this.lastFetchTime.set(targetAddress, Math.max(this.lastFetchTime.get(targetAddress) || 0, activityTime));
+        processedCount++;
 
         // Execute frontrun
         await this.deps.onDetectedTrade(signal);
       }
+      
+      logger.debug(`[Monitor] Processed ${processedCount} trades, skipped ${skippedCount} activities for ${targetAddress}`);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.status === 404) {
         return;

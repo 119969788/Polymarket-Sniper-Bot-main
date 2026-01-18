@@ -8,22 +8,34 @@ export interface Logger {
 }
 
 export class ConsoleLogger implements Logger {
+  private getTimestamp(): string {
+    return new Date().toISOString();
+  }
+
   info(msg: string): void {
+    const timestamp = this.getTimestamp();
     // eslint-disable-next-line no-console
-    console.log(chalk.cyan('[INFO]'), msg);
+    console.log(chalk.cyan(`[INFO] [${timestamp}]`), msg);
   }
   warn(msg: string): void {
+    const timestamp = this.getTimestamp();
     // eslint-disable-next-line no-console
-    console.warn(chalk.yellow('[WARN]'), msg);
+    console.warn(chalk.yellow(`[WARN] [${timestamp}]`), msg);
   }
   error(msg: string, err?: Error): void {
+    const timestamp = this.getTimestamp();
+    const errorDetails = err 
+      ? `\n${chalk.red('Error Stack:')} ${err.stack ?? err.message}`
+      : '';
     // eslint-disable-next-line no-console
-    console.error(chalk.red('[ERROR]'), msg, err ? `\n${err.stack ?? err.message}` : '');
+    console.error(chalk.red(`[ERROR] [${timestamp}]`), msg, errorDetails);
   }
   debug(msg: string): void {
-    if (process.env.DEBUG === '1') {
+    const isDebugEnabled = process.env.DEBUG === '1' || process.env.VERBOSE === '1';
+    if (isDebugEnabled) {
+      const timestamp = this.getTimestamp();
       // eslint-disable-next-line no-console
-      console.debug(chalk.gray('[DEBUG]'), msg);
+      console.debug(chalk.gray(`[DEBUG] [${timestamp}]`), msg);
     }
   }
 }

@@ -22,15 +22,28 @@ export async function postOrder(input: PostOrderInput): Promise<void> {
 
   // Optional: validate market exists if marketId provided
   if (marketId) {
-    const market = await client.getMarket(marketId);
-    if (!market) {
-      throw new Error(`Market not found: ${marketId}`);
+    try {
+      const market = await client.getMarket(marketId);
+      if (!market) {
+        throw new Error(`Market not found: ${marketId}`);
+      }
+      // Log market info if DEBUG is enabled
+      if (process.env.DEBUG === '1' || process.env.VERBOSE === '1') {
+        console.log(`[PostOrder] Market validated: ${marketId}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Market validation failed: ${errorMessage}`);
     }
   }
 
   let orderBook;
   try {
     orderBook = await client.getOrderBook(tokenId);
+    if (process.env.DEBUG === '1' || process.env.VERBOSE === '1') {
+      const levels = side === 'BUY' ? orderBook.asks : orderBook.bids;
+      console.log(`[PostOrder] Orderbook fetched for ${tokenId}: ${levels?.length || 0} ${side === 'BUY' ? 'asks' : 'bids'}`);
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes('No orderbook exists') || errorMessage.includes('404')) {
